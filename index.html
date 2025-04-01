@@ -2,18 +2,39 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>簡単なポケモン風ゲーム</title>
     <style>
         body { margin: 0; display: flex; justify-content: center; align-items: center; height: 100vh; }
-        canvas { border: 1px solid black; }
+        #gameContainer { position: relative; }
+        #gameCanvas { border: 1px solid black; }
+        #pokemonStatus, #pokemonManager { 
+            position: absolute; 
+            top: 0; 
+            left: 0; 
+            width: 100%; 
+            height: 100%; 
+            background: rgba(0, 0, 0, 0.8); 
+            color: white; 
+            display: none; 
+            justify-content: center; 
+            align-items: center; 
+            flex-direction: column; 
+        }
     </style>
 </head>
 <body>
-    <canvas id="gameCanvas" width="320" height="240"></canvas>
+    <div id="gameContainer">
+        <canvas id="gameCanvas" width="640" height="480"></canvas>
+        <div id="pokemonStatus"></div>
+        <div id="pokemonManager"></div>
+    </div>
     <script>
         // Canvasの設定
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
+        const pokemonStatusDiv = document.getElementById('pokemonStatus');
+        const pokemonManagerDiv = document.getElementById('pokemonManager');
 
         // 画像の読み込み
         const playerImg = new Image();
@@ -24,6 +45,8 @@
         bedImg.src = 'bed.png';
         const gardenImg = new Image();
         gardenImg.src = 'garden.png';
+        const pcImg = new Image();
+        pcImg.src = 'pc.png';
         const battleBgImg = new Image();
         battleBgImg.src = 'battle_bg.png';
         const pokemonImgs = [
@@ -36,33 +59,48 @@
         pokemonImgs[2].img.src = 'pokemon3.png';
 
         // ゲームの状態
-        let playerX = 0;        // プレイヤーのX座標
-        let playerY = 0;        // プレイヤーのY座標
-        let steps = 0;          // 歩数
-        let inBattle = false;   // 戦闘中かどうか
-        let enemyPokemon = null;// 現在の敵ポケモン
-        let party = [];         // 手持ちのポケモン
-        let pc = [];            // パソコンのポケモン
-        const houseX = 100;     // 家のX座標
-        const houseY = 100;     // 家のY座標
-        const bedX = houseX + 16; // ベッドのX座標
-        const bedY = houseY + 16; // ベッドのY座標
-        const gardenX = 200;    // 庭のX座標
-        const gardenY = 100;    // 庭のY座標
+        let playerX = 0;
+        let playerY = 0;
+        let targetX = 0;
+        let targetY = 0;
+        let moving = false;
+        let steps = 0;
+        let inBattle = false;
+        let enemyPokemon = null;
+        let party = []; // 手持ちポケモン
+        let pc = [];    // パソコンのポケモン
+        const houseX = 100;
+        const houseY = 100;
+        const houseWidth = 128;  // 家の範囲を拡大
+        const houseHeight = 128; // 家の範囲を拡大
+        const bedX = houseX + 32;
+        const bedY = houseY + 32;
+        const pcX = houseX + 64;  // パソコンの位置
+        const pcY = houseY + 32;  // パソコンの位置
+        const gardenX = 300;
+        const gardenY = 100;
+        const gardenWidth = 128;  // 庭の範囲を拡大
+        const gardenHeight = 128; // 庭の範囲を拡大
+        let lastTap = 0;
 
         // プレイヤーが家にいるかどうかを判定
         function isInHouse() {
-            return playerX >= houseX && playerX < houseX + 64 && playerY >= houseY && playerY < houseY + 64;
+            return playerX >= houseX && playerX < houseX + houseWidth && playerY >= houseY && playerY < houseY + houseHeight;
         }
 
         // プレイヤーが庭にいるかどうかを判定
         function isInGarden() {
-            return playerX >= gardenX && playerX < gardenX + 64 && playerY >= gardenY && playerY < gardenY + 64;
+            return playerX >= gardenX && playerX < gardenX + gardenWidth && playerY >= gardenY && playerY < gardenY + gardenHeight;
+        }
+
+        // プレイヤーがパソコンの位置にいるかどうかを判定
+        function isAtPC() {
+            return isInHouse() && Math.abs(playerX - pcX) < 10 && Math.abs(playerY - pcY) < 10;
         }
 
         // ベッドでの回復
         function checkRecovery() {
-            if (isInHouse() && playerX === bedX && playerY === bedY) {
+            if (isInHouse() && Math.abs(playerX - bedX) < 10 && Math.abs(playerY - bedY) < 10) {
                 party.forEach(p => p.hp = p.maxHp);
                 alert('手持ちのポケモンが全回復しました！');
             }
@@ -79,7 +117,7 @@
         function startBattle() {
             inBattle = true;
             const randomIndex = Math.floor(Math.random() * pokemonImgs.length);
-            enemyPokemon = { ...pokemonImgs[randomIndex] }; // コピーを作成
+            enemyPokemon = { ...pokemonImgs[randomIndex] };
             alert(`${enemyPokemon.name}が現れた！`);
         }
 
@@ -103,80 +141,120 @@
             endBattle();
         }
 
+        // プレイヤーの自動移動
+        function movePlayer() {
+            if (moving) {
+                const dx = targetX - playerX;
+                const dy = targetY - playerY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                if (distance > 5) {
+                    const speed = 5;
+                    playerX += (dx / distance) * speed;
+                    playerY += (dy / distance) * speed;
+                    if (isInGarden()) steps++;
+                    checkEncounter();
+                } else {
+                    moving = false;
+                    checkRecovery();
+                }
+            }
+        }
+
+        // 手持ちポケモンのステータス表示
+        function showPokemonStatus() {
+            pokemonStatusDiv.innerHTML = '';
+            party.forEach((p, index) => {
+                pokemonStatusDiv.innerHTML += `<p>${index + 1}: ${p.name} HP: ${p.hp}/${p.maxHp}</p>`;
+            });
+            pokemonStatusDiv.style.display = 'flex';
+        }
+
+        // ポケモン管理画面
+        function showPokemonManager() {
+            pokemonManagerDiv.innerHTML = '';
+            pokemonManagerDiv.innerHTML += '<h2>手持ちポケモン</h2>';
+            party.forEach((p, index) => {
+                pokemonManagerDiv.innerHTML += `<p>${index + 1}: ${p.name} <button onclick="moveToPC(${index})">PCへ</button></p>`;
+            });
+            pokemonManagerDiv.innerHTML += '<h2>PCのポケモン</h2>';
+            pc.forEach((p, index) => {
+                pokemonManagerDiv.innerHTML += `<p>${index + 1}: ${p.name} <button onclick="moveToParty(${index})">手持ちへ</button></p>`;
+            });
+            pokemonManagerDiv.style.display = 'flex';
+        }
+
+        // 手持ちからPCへ移動
+        function moveToPC(index) {
+            const pokemon = party.splice(index, 1)[0];
+            pc.push(pokemon);
+            showPokemonManager();
+        }
+
+        // PCから手持ちへ移動
+        function moveToParty(index) {
+            if (party.length < 6) {
+                const pokemon = pc.splice(index, 1)[0];
+                party.push(pokemon);
+                showPokemonManager();
+            } else {
+                alert('手持ちがいっぱいです。');
+            }
+        }
+
         // ゲームループ
         function gameLoop() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
             if (!inBattle) {
                 // フィールドの描画
-                ctx.drawImage(houseImg, houseX, houseY);
+                ctx.drawImage(houseImg, houseX, houseY, houseWidth, houseHeight);
                 ctx.drawImage(bedImg, bedX, bedY);
-                ctx.drawImage(gardenImg, gardenX, gardenY);
+                ctx.drawImage(pcImg, pcX, pcY);
+                ctx.drawImage(gardenImg, gardenX, gardenY, gardenWidth, gardenHeight);
                 ctx.drawImage(playerImg, playerX, playerY);
-                checkRecovery();
+                movePlayer();
             } else {
                 // 戦闘画面の描画
-                ctx.drawImage(battleBgImg, 0, 0);
-                ctx.drawImage(enemyPokemon.img, 200, 50);
+                ctx.drawImage(battleBgImg, 0, 0, canvas.width, canvas.height);
+                ctx.drawImage(enemyPokemon.img, 400, 100);
                 ctx.fillStyle = 'white';
-                ctx.fillText(`敵: ${enemyPokemon.name} HP: ${enemyPokemon.hp}/${enemyPokemon.maxHp}`, 10, 20);
-                ctx.fillText('コマンド: 1.こうげき 2.にげる 3.ほかく', 10, 220);
+                ctx.fillText(`敵: ${enemyPokemon.name} HP: ${enemyPokemon.hp}/${enemyPokemon.maxHp}`, 20, 40);
+                ctx.fillText('コマンド: 1.こうげき 2.にげる 3.ほかく', 20, 440);
             }
 
             requestAnimationFrame(gameLoop);
         }
 
-        // キーボード入力の処理
-        document.addEventListener('keydown', (e) => {
-            if (!inBattle) {
-                // フィールド移動
-                switch (e.key) {
-                    case 'ArrowUp':
-                        playerY -= 10;
-                        if (isInGarden()) steps++;
-                        checkEncounter();
-                        break;
-                    case 'ArrowDown':
-                        playerY += 10;
-                        if (isInGarden()) steps++;
-                        checkEncounter();
-                        break;
-                    case 'ArrowLeft':
-                        playerX -= 10;
-                        if (isInGarden()) steps++;
-                        checkEncounter();
-                        break;
-                    case 'ArrowRight':
-                        playerX += 10;
-                        if (isInGarden()) steps++;
-                        checkEncounter();
-                        break;
+        // タッチイベントの処理
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const now = new Date().getTime();
+            const tapLength = now - lastTap;
+            if (tapLength < 300 && tapLength > 0) {
+                // ダブルタップ
+                if (isAtPC()) {
+                    showPokemonManager();
+                } else {
+                    showPokemonStatus();
                 }
             } else {
-                // 戦闘中のコマンド入力
-                switch (e.key) {
-                    case '1': // こうげき
-                        enemyPokemon.hp -= 10;
-                        if (enemyPokemon.hp <= 0) {
-                            alert('敵を倒しました！');
-                            endBattle();
-                        } else {
-                            alert(`敵に10ダメージ与えました。残りHP: ${enemyPokemon.hp}`);
-                        }
-                        break;
-                    case '2': // にげる
-                        alert('逃げました。');
-                        endBattle();
-                        break;
-                    case '3': // ほかく
-                        const catchRate = (1 - enemyPokemon.hp / enemyPokemon.maxHp) * 100;
-                        if (Math.random() * 100 < catchRate) {
-                            catchPokemon(enemyPokemon);
-                        } else {
-                            alert('捕獲に失敗しました。');
-                        }
-                        break;
-                }
+                // シングルタップ
+                const rect = canvas.getBoundingClientRect();
+                const touch = e.touches[0];
+                targetX = (touch.clientX - rect.left) * (canvas.width / rect.width);
+                targetY = (touch.clientY - rect.top) * (canvas.height / rect.height);
+                moving = true;
+            }
+            lastTap = now;
+        });
+
+        // 小窓を閉じる処理（タップで閉じる）
+        pokemonStatusDiv.addEventListener('touchstart', () => {
+            pokemonStatusDiv.style.display = 'none';
+        });
+        pokemonManagerDiv.addEventListener('touchstart', (e) => {
+            if (e.target.tagName !== 'BUTTON') {
+                pokemonManagerDiv.style.display = 'none';
             }
         });
 
